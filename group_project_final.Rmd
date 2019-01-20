@@ -1,0 +1,1361 @@
+---
+title: "Data Mining Group Project"
+Group Member: Yuwei_Zhu, Junghsuan_Chu, Junming_Huang, Qiutong_Dong
+output: 
+  html_document:
+    theme: cerulean
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    code_folding: hide
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+```
+## Final Project: *How many future visitors a restaurant will receive?*
+
+**Group Member: Yuwei_Zhu, Junghsuan_Chu, Junming_Huang, Qiutong_Dong**
+![i](data/image1.jpeg)
+
+##1 Introduction
+
+Our Final project is the one of topics from Kaggle competition:<br>
+
+**Recruit Restaurant Visitor Forecasting** - Predict how many future visitors a restaurant will receive? <br>
+<br>
+This is a relational dataset from two reservation systems. Each restaurant has a unique *air_store_id* and *hpg_store_id*. Note that not all restaurants are covered by both systems, and that we have been provided data beyond the restaurants for which we must forecast. 
+
+In this competition, we will have to use panel data to forecast problems centered around restaurant visitors. The dataset is provided by Recruit company, which owns reservation systems(like Yelp) and a reservation control and cash register system(Air system).  
+
+To be specific, We also include the weather data in our analysis, which will be make our prediction more close to the real world situation. 
+
+##2 Business Question
+
+Running a thriving local restaurant isn't always as charming as first impressions appear. There are often all sorts of unexpected troubles popping up that could hurt business, especially in current fast-changing market.
+
+For instance, how many people are using the App to make reservation? Does these users go to the restaurant after make those reservations? Should I worry about the weather that will affact my reserve visitors?..etc.
+
+One common predicament is that restaurants need to know how many customers to expect each day to effectively purchase ingredients and schedule staff members. This forecast isn't easy to make because many unpredictable factors affect restaurant attendance, like weather and local competition. It's even harder for newer restaurants with little historical data.
+
+Therefore, we are interested in digging deeper into the issue of forecasting number of visiting customers for restaurants on daily basis.
+
+```{r library, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(tidymodels)
+library(caret)
+library(DataExplorer)
+library(gridExtra)
+library(scales)
+library(doParallel)
+library(tidyposterior)
+library(ggthemes)
+library(ggmap)
+library(sp)
+library(maptools)
+library(maps)
+library(RColorBrewer)
+library(viridis)
+library(ggridges)
+library(leaflet)
+library(htmltools)
+library(stringr)
+library(data.table)
+```
+
+```{r DataInput,message=FALSE, warning=FALSE}
+air_reserve <- read_csv("data/air_reserve.csv")
+air_store_info <- read_csv("data/air_store_info.csv")
+air_visit_data <- read_csv("data/air_visit_data.csv")
+date_info <- read_csv("data/date_info.csv")
+hpg_reserve <- read_csv("data/hpg_reserve.csv")
+hpg_store_info <- read_csv("data/hpg_store_info.csv")
+store_id_relation <- read_csv("data/store_id_relation.csv")
+test_sample <- read_csv("data/sample_submission.csv")
+weather <- read_csv("data/weather.csv")
+station <- read_csv("data/nearest_active_station.csv")
+```
+
+##3 File Overview{.tabset}
+
+The Kaggle competition provides seven datasets contains different information about restaurants for us to analyze and one testing set for submission. Except for these basic information, the competition allows us to extract external weather data from Japan Meteorological Agency: http://www.jma.go.jp/jma/indexe.html to obtain potential useful attributes.
+
+Below are brief introduction of these datasets.
+
+###3.1 air_reserve
+This file contains reservations made in the air system. Note that the *reserve_datetime* indicates the time when the reservation was created, whereas the *visit_datetime* is the time in the future where the visit will occur.<br>
+*air_store_id* - the restaurant's id in the air system<br>
+*visit_datetime* - the time of the reservation<br>
+*reserve_datetime* - the time the reservation was made<br>
+*reserve_visitors* - the number of visitors for that reservation<br>
+```{r}
+summary(air_reserve)
+```
+```{r}
+glimpse(air_reserve)
+```
+
+###3.2 air_store_info
+This file contains information about select air restaurants. Column names and contents are self-explanatory.<br>
+*air_store_id*<br>
+*air_genre_name*<br>
+*air_area_name*<br>
+*latitude*<br>
+*longitude*<br>
+Note: latitude and longitude are the latitude and longitude of the area to which the store belongs, not exact location for privacy concern.<br>
+```{r}
+summary(air_store_info)
+```
+
+```{r}
+glimpse(air_store_info)
+```
+
+###3.3 air_visit_data
+This file contains historical visit data for the air restaurants.<br>
+*air_store_id*<br>
+*visit_date* - the date<br>
+*visitors* - the number of visitors to the restaurant on the date<br>
+```{r}
+summary(air_visit_data)
+```
+```{r}
+glimpse(air_visit_data)
+```
+
+###3.4 date_info
+This file gives basic information about the calendar dates in the dataset.<br>
+*calendar_date*<br>
+*day_of_week*<br>
+*holiday_flg* - is the day a holiday in Japan<br>
+```{r}
+summary(air_visit_data)
+```
+```{r}
+glimpse(air_visit_data)
+```
+
+###3.5 hpg_reserve
+This file contains reservations made in the hpg system.<br>
+*hpg_store_id* - the restaurant's id in the hpg system<br>
+*visit_datetime* - the time of the reservation<br>
+*reserve_datetime* - the time the reservation was made<br>
+*reserve_visitors* - the number of visitors for that reservation<br>
+```{r}
+summary(hpg_reserve)
+```
+```{r}
+glimpse(hpg_reserve)
+```
+
+###3.6 hpg_store_info
+This file contains information about select hpg restaurants. Column names and contents are self-explanatory.<br>
+*hpg_store_id*<br>
+*hpg_genre_name*<br>
+*hpg_area_name*<br>
+*latitude*<br>
+*longitude*<br>
+Note: latitude and longitude are the latitude and longitude of the area to which the store belongs<br>
+```{r}
+summary(hpg_reserve)
+```
+```{r}
+glimpse(hpg_reserve)
+```
+
+###3.7 store_id_relation
+This file allows you to join select restaurants that have both the air and hpg system.<br>
+*hpg_store_id*<br>
+*air_store_id*<br>
+```{r}
+summary(store_id_relation)
+```
+```{r}
+glimpse(store_id_relation)
+```
+
+###3.8 sample_submission
+This file shows a submission in the correct format, including the days for which you must forecast.<br>
+*id* - the *id* is formed by concatenating the *air_store_id* and *visit_date* with an underscore<br>
+*visitors*- the number of visitors forecasted for the store and date combination<br>
+```{r}
+summary(test_sample)
+```
+```{r}
+glimpse(test_sample)
+```
+
+###3.9 weather
+This file contains weather information for every weather station.<br>
+*visit_date*<br>
+*avg_temperature*<br>
+*high_temperature*<br>
+*low_temperature*<br>
+*precipitation*<br>
+*hours_sunlight*<br>
+*solar_radiation*<br>
+*deepest_snowfall*<br>
+*total_snowfall*<br>
+*avg_wind_speed*<br>
+*avg_vapor_pressure*<br>
+*avg_local_pressure*<br>
+*avg_humidity*<br>
+*avg_sea_pressure*<br>
+*cloud_cover*<br>
+*station_id* - the join of a station’s prefecture, first_name, and second_name, with "__" (double underscores) <br>
+```{r}
+summary(weather)
+```
+```{r}
+glimpse(weather)
+```
+
+###3.10 nearest_active_station
+This file describes the closest weather station to at least one store in *air_store_info*.<br>
+*air_store_id*<br>
+*air_genre_name*<br>
+*air_area_name*<br>
+*latitude*<br>
+*longitude*<br>
+*latitude_str*<br>
+*longitude_str*<br>
+*station_id*<br>
+*station_latitude*<br>
+*station_longitude*<br>
+*station_vincenty*<br>
+*station_great_circle*<br>
+
+
+
+Get ready, let's start!
+
+
+Before our journey starts, let's preprare our data and join informative tables first.
+
+##4 Data Transformation (Part I) - Data Cleaning
+<br>
+For further analysis, we need to merge all abovementioned tables together to get the training dataset. 
+
+Currently, only the **air_visit_data** contains our target variable *visitors*. Therefore, we decided to start from this table and join other informative tables that we are interested in.
+
+###4.1 Combine Air system data
+
+First, we merge three air system related tables together.
+
+```{r air_reserve}
+air_reserve_sum <- air_reserve %>% 
+  mutate(visit_date = as.Date(visit_datetime)) %>% 
+  group_by(air_store_id, visit_date) %>% 
+  summarise(visitor_sum = sum(reserve_visitors))
+```
+
+```{r air_data,results='hide'}
+air_data <- left_join(air_visit_data, air_reserve_sum, by = c("air_store_id" = "air_store_id", "visit_date" = "visit_date")) 
+air_data[is.na(air_data)] <- 0
+air_data <- air_data %>% 
+  left_join(air_store_info, by = "air_store_id") %>% 
+  mutate(reserve_visitor =  visitor_sum) %>% 
+  select(-visitor_sum)
+air_data
+```
+
+###4.2 Combine HPG with Air data
+
+Table **store_id_relation** contains the store id that matches store both in Air and HPG system. There are 829 stores in Air system and 2690 stores in HPG system. However, there are only 150 stores can be matched, which accounts for 18% of total number of stores in air system.
+
+```{r}
+paste("There are", nrow(air_store_info), "stores in Air system.")
+paste('There are', nrow(hpg_store_info), 'stores in HPG system.')
+paste('There are',nrow(store_id_relation),'stores in both system.')
+```
+
+If we merger the reservation information of these 150 stores into the air system dataset, we might introduce more bias into our dataset because we cannot simply assume those not matched stores do not have other reservations (Other reservation system might exist in Japan). Thus, we decide to focus on Air system dataset and put HPG system data aside at this point of time.
+
+###4.3 Combine Date Information
+
+In reality, people tend to go to restaurant during weekend and holiday. This fact indicates that date information can be great explanatory variable here. Consequently, we join date information into our dataset.
+
+```{r}
+air_data <- air_data %>% 
+  left_join(date_info, by = c('visit_date'='calendar_date'))
+```
+
+###4.4 Combine Weather Information
+
+Similar to date, weather has influence on visitor numbers as well. As mentioned before, we are allowed to extract external weather data from Japan Meteorological Agency. 
+
+We've collected the dataset includes the weather related information from 2016/01 to 2017/04 in our restaurants area. To choose the right weather data for each store, we have to first figure out the nearest station by using longitude and latitude and then merge the information into dataset.
+
+Credit to Hunter McGushion: https://www.kaggle.com/huntermcgushion/exhaustive-weather-eda-file-overview/data
+```{r weatherData}
+weather_station <- weather %>%
+  left_join(station, by = 'station_id')
+```
+
+```{r joinData}
+final_data <- left_join(air_data, weather_station, by = c("air_store_id" = "air_store_id", "visit_date" = "visit_date")) %>% 
+  select(-X1) %>% 
+  select(- c('station_id':'station_great_circle')) %>% 
+  mutate(air_genre_name = air_genre_name.x) %>% 
+  mutate(air_area_name = air_area_name.x) %>% 
+  mutate(latitude = latitude.x) %>% 
+  mutate(longitude = longitude.x) %>% 
+  select(- c('air_genre_name.x':'longitude.x'))
+paste('Now there are', nrow(final_data), 'observation with', ncol(final_data), 'variables.')
+```
+Data preparing done! To gather all the information wee need, we joined five tables and now there are 252108 observation with 24 variables in our dataset.<br>
+
+Now let's working on Data cleaning - Missing values!
+<br>
+
+###4.5 Missing Value
+
+```{r plot missing Value, warning=FALSE, message=FALSE}
+plot_missing(final_data)
+```
+<br>
+From this plot, we can see the missing values in each variable and its missing percentages in the dataset. Since there are more than 95% of data in "deepest_snowfall" and "total_snowfall" variables which are missing, we decided to drop both variables. In addition, for the weather data missing percentages more that 25%, we also decided to drop them because weather data is dynamic and sometimes difficult to predict, the imputation might cause other problems and mislead the analysis.
+
+```{r process missing value, warning=FALSE, message=FALSE}
+final_data <- final_data %>% 
+  select(- avg_sea_pressure, -avg_local_pressure, -avg_humidity, -avg_vapor_pressure, -cloud_cover, -precipitation, -solar_radiation, -deepest_snowfall, -total_snowfall)
+```
+
+For those columns with less than 25% of missing value, we use the mean of other stores of each date to replace them.
+
+```{r imputation, warning=FALSE, message=FALSE}
+missing_value <- final_data %>% 
+  group_by(visit_date) %>% 
+  summarise(hightemp_mean = mean(high_temperature, na.rm = TRUE),
+            lowtemp_mean = mean(low_temperature, na.rm = TRUE),
+            avgtemp_mean = mean(avg_temperature, na.rm = TRUE),
+            wind_speed_mean = mean(avg_wind_speed, na.rm = TRUE),
+            sunlight_mean = mean(hours_sunlight, na.rm = TRUE))
+```
+
+```{r final_data, warning=FALSE, message=FALSE}
+final_data <- final_data %>% 
+  left_join(missing_value, by = 'visit_date') %>% 
+  mutate(high_temperature = case_when(is.na(high_temperature) ~ hightemp_mean,
+                                     !is.na(high_temperature) ~ high_temperature)) %>% 
+  mutate(low_temperature = case_when(is.na(low_temperature) ~ lowtemp_mean,
+                                     !is.na(low_temperature) ~ low_temperature)) %>% 
+  mutate(avg_temperature = case_when(is.na(avg_temperature) ~ avgtemp_mean,
+                                     !is.na(avg_temperature) ~ avg_temperature)) %>% 
+  mutate(avg_wind_speed = case_when(is.na(avg_wind_speed) ~ wind_speed_mean,
+                                     !is.na(avg_wind_speed) ~ avg_wind_speed)) %>% 
+  mutate(hours_sunlight = case_when(is.na(hours_sunlight) ~ sunlight_mean,
+                                     !is.na(hours_sunlight) ~ hours_sunlight)) %>% 
+  select(-hightemp_mean, -lowtemp_mean, -avgtemp_mean, -wind_speed_mean, -sunlight_mean)
+final_data
+```
+
+```{r missing value, warning=FALSE, message=FALSE}
+plot_missing(final_data)
+```
+<br>
+Now, there are no missing values, our data is all complete. Let's step into EDA part.
+
+##5 Exploring Data Analysis
+
+First step of EDA, let's see how does the data look like overall.
+```{r intro}
+introduce(final_data)
+plot_intro(final_data)
+```
+<br>
+We have 252,108 records and 15 variables, 14 of which are predictors. Also, there are 5 discrete columns, 10 continuous conlumns and no missing columns or values. 
+
+What are the variables we have now?
+```{r names of data}
+names(final_data)
+```
+From the names of columns, it's obvious that we have two types of variables in general:
+
+1). **AirREGI-related variable**: variables provided by AirREGI, including *air_store_id*, *visit_date*, *visitors*, *reserve_visitor*, *day_of_week*, *holiday_flg*, *air_genre_name*, *air_area_name*, *latitude*, *longitude*.
+
+2). **Weather-related variable**: variables providing weather information, including *avg_temperature*, *high_temperature*, *low_temperature*, *hours_sunlight*, and *avg_wind_speed*.
+
+We will explore them seperately. 
+
+###5.1 Distribution of target variable - visitors 
+
+First, let's have a general picture about our target variable - Visitors. 
+
+```{r visit_count_outlier}
+air_visits <- final_data %>%
+  ggplot(aes(visitors)) +
+  geom_vline(xintercept = 20, color = "Red")+
+  geom_histogram(bins = 30, alpha = 0.8) +
+  scale_x_log10()+
+  labs(title = "Distribution of Visitors")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+air_visits_outlier <- 
+  ggplot(final_data)+
+  geom_boxplot(aes(x = "", y = visitors))+
+  labs(x = "",
+       y = "visitors", 
+       title = "Boxplot of Visitors")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(air_visits, air_visits_outlier, ncol = 2)
+```
+
+From the above graph, we can see that the number of daily guests per restaurant peaks at around 20 (the red line).The distribution extends up to 100 and, in rare cases, beyond. To take closer look for those rare case, we use the boxplot to find out those outliers. There are some restuarants that have over 750 visitor in a specific day.
+
+Since this is a panel data, let's see how our target variable distributed across date.
+
+```{r visitors_by_date}
+final_data %>%
+  group_by(visit_date)%>%
+  summarise(visitors = sum(visitors))%>%
+  ggplot(aes(x = visit_date, y = visitors))+
+  geom_line(color = 'darkred')
+```
+<br>
+Based on the line graph, there is an obvious rise in count of records for visit date after July 2016. We infer that this is due to wider use of AirREGI service and more restaurants join the app after July 2016.
+
+After July 2016, the distribution of *visit_date* is even except for an obvious decline around July 2017. As mentioned by official description, this is due to a holiday week in Japan called the "Golden Week."
+
+Then let's see the ditribution of daily visitors per restaurant:
+
+###5.2 Distribution of independent variables 
+There are a lot of variables that we are interested to know, and some of them might highly related to our target vairables. Before we explore more about their relationships with *visitors*, let's explore other vairables first. 
+We seperate the variables into three categories, and let's explore them together now.
+
+#### A. Types and Locations of Restaurants
+
+First, let's discover where are these 829 restaurants locate.
+
+Here we can see that most restaurants are located along the coastline, which makes sense since coastal areas are more developed in Japan. **(You can interact with the map)**
+ 
+```{r active_map, warning=FALSE, message=FALSE}
+pref <- as.data.frame(str_split_fixed(air_store_info$air_area_name, " ", 2))
+air_store <- cbind(air_store_info, pref[c(1)])%>%
+  rename(pref = V1)
+
+# create the labels
+labels <- sprintf(
+    "Store ID: %s</br>Prefecture:%s</br>Genre: %s", air_store$air_store_id, air_store$pref, air_store$air_genre_name) %>%
+    lapply(HTML)
+
+air_store %>%
+    leaflet() %>%
+    addProviderTiles("CartoDB.Positron") %>%
+    addCircleMarkers(~ longitude,
+    ~ latitude,
+    radius = 4,
+    label = labels,
+    clusterOptions = markerClusterOptions())
+#https://www.kaggle.com/captcalculator/a-very-extensive-recruit-exploratory-analysis
+```
+
+```{r}
+top8 <- final_data %>%
+  group_by(air_area_name) %>%
+  count() %>%
+  ungroup() %>%
+  top_n(8,n) %>%
+  ggplot(aes(reorder(air_area_name, n, FUN = min) ,n, fill = air_area_name))+
+  geom_col() +
+  theme(legend.position = "none")+
+  coord_flip() +
+  labs(x = "Top 8 areas", y = "Number of air restaurants")+
+   scale_fill_brewer(palette = "Spectral")+
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = 'white'),
+        panel.grid = element_line(color = 'grey90'))
+top8
+```
+
+Here we only list the top 8 areas that have more restaurants. Among these areas, Fukuoka has the largest number of restaurants and then followed by other Tokyo areas. 
+
+**What are the types of these restaurants? **
+
+```{r distinct_id, include = FALSE, warning=FALSE, message=FALSE}
+distinct_final_data <- final_data %>% 
+  distinct(air_store_id, .keep_all = T)
+```
+
+```{r pie chart-type, warning=FALSE, message=FALSE}
+# Plot the pie chart for different genres.
+ggplot(data = distinct_final_data, mapping=aes(x="Genre",fill=air_genre_name))+
+  geom_bar(stat="count",width=0.5,position='stack')+
+  coord_polar("y", start=0)+
+    labs(title = "Piechart of the types of restaurants")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(x = '',y = '')
+
+# Calculate the ratos of Top 3 genres.
+Izakaya_ratio <- nrow(subset(distinct_final_data, air_genre_name == "Izakaya"))/nrow(distinct_final_data)
+paste("Izakaya accounts for", Izakaya_ratio, "of total number of restaurants")
+
+Cafe_Sweets_ratio <- nrow(subset(distinct_final_data, air_genre_name == "Cafe/Sweets"))/nrow(distinct_final_data)
+paste("Cafe/Sweets accounts for", Cafe_Sweets_ratio, "of total number of restaurants")
+
+Dining_Bar_ratio <- nrow(subset(distinct_final_data, air_genre_name == "Dining bar"))/nrow(distinct_final_data)
+paste("Dinning bar accounts for", Dining_Bar_ratio, "of total number of restaurants")
+```
+<br>
+From the pie chart, we can observe that Top 3 genres of restaurants in AirREGI are *Izakaya*, *Cafe/Sweets*, and *Dining bar*. After calculation, we figure out that their occupation ratios are 23.76%, 21.83%, 13.02%, respectively.
+
+#### B. Date: Week/Holliday
+
+After understanding the restaurants, let's explore the time period of our dataset. 
+
+```{r}
+time_data <- final_data
+setDT(time_data)[, Month_Yr := format(as.Date(visit_date), "%Y-%m") ]
+setDT(time_data)[, Year := format(as.Date(visit_date), "%Y") ]
+
+period <- time_data%>%
+  group_by(Month_Yr)%>%
+  ggplot(aes(x=Month_Yr, fill = Year))+
+  geom_bar(alpha=0.8)+
+  scale_fill_brewer(palette = "Set1")+
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8))+
+  labs(x = 'Month-Year',
+       y = 'Frequency',
+       title = 'Time Span')+
+  theme(plot.title = element_text(hjust = 0.5))
+period
+```
+
+From this plot, we can clear see that the periods of our dataset starts from January 2016 to April 2017. Moreover, we can see that the air system has more data collected from July 2016 to April 2017. Recall above, we think that it is due to wider use of AirREGI service after July 2016.
+
+Now let break down the time period into day of week to see we can find any fluctuates. 
+
+```{r}
+most_day <- ggplot(final_data, aes(day_of_week))+
+  geom_bar(alpha=0.8,fill = "blue4")+
+  xlab("day of week") + 
+  ggtitle("Bar chart for Day of Week")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  theme(plot.title = element_text(hjust = 0.5))
+most_day
+```
+
+From the bar chart of days of week, we can learn that Friday is the most frequent day that people would choose to go out, and then Saturday and Thursday. Thursday is quite a surprising result since it's a usual business day.
+
+Next, let's take closer look to Holidays. 
+
+```{r distinct_date, include = FALSE, warning=FALSE, message=FALSE}
+distinct_date_data <- time_data %>% 
+  distinct(visit_date, .keep_all = T)
+```
+
+```{r holidays_year}
+distinct_date_data$holiday_flg <- factor(distinct_date_data$holiday_flg, levels = c("0", "1"))
+
+holidayOrNot <- distinct_date_data %>%
+  ggplot(aes(x=holiday_flg, fill =holiday_flg)) +
+  geom_bar(alpha = 0.8) +
+  theme(legend.position = "none")+
+  facet_wrap(~Year)+
+  scale_fill_brewer(palette = "Set1")
+holidayOrNot
+```
+
+From this graph we can see that in both 2016 and 2017, the number of holidays(1) is less than nonholidays(0).
+
+The reason that the number of holidays(0) in 2017 is so much less than 2016 is because the data in 2017 only contain four months.
+
+#### C. Weather: Temperature/Sunlight/Wind
+
+```{r weather_data, include=FALSE, warning=FALSE, message=FALSE}
+weather_data <- final_data%>%
+  select(air_store_id, visit_date, visitors, avg_temperature,high_temperature, low_temperature, hours_sunlight, avg_wind_speed, air_area_name)
+
+weather_data <- weather_data %>%
+  mutate(diff_temperature = high_temperature-low_temperature)
+
+prefecture <- as.data.frame(str_split_fixed(final_data$air_area_name, " ", 2))
+weather_data <- cbind(weather_data, prefecture[c(1)])%>%
+  rename(prefecture = V1)
+```
+
+```{r weather_monly_data, include= FALSE, warning=FALSE, message=FALSE,fig.height=6 }
+setDT(weather_data)[, Month_Yr := format(as.Date(visit_date), "%Y-%m") ]
+weather_monthly <- weather_data %>%
+  group_by(Month_Yr)%>%
+  summarise(monthly_visitors = sum(visitors),
+            avg_temperature = mean(avg_temperature),
+            avg_high_temperature = mean(high_temperature),
+            avg_low_temperature = mean(low_temperature),
+            avg_hours_sunlight = mean(hours_sunlight),
+            avg_wind_speed =mean(avg_wind_speed))%>%
+  mutate(diff_temperature = avg_high_temperature-avg_low_temperature)
+```
+
+Since 3/5 weather-related variables are about temperature, we pick it for detailed exploration.
+First, let's have a look at how the temperature looks like in Japan all the year round.
+
+```{r avg_temp, fig.height=5}
+avg_temp <- weather_data %>%
+  ggplot(aes(x = avg_temperature , y = fct_rev(Month_Yr), fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01, gradient_lwd = 1., bandwidth = 1.4) +
+  scale_fill_viridis(name = "T_avg [°C]", option = "C") +
+  ggtitle("Average temperature of restaurant areas in 2016/01-2017/04") +
+  labs(x = "Average temperature", y = "") +
+  theme_ridges(font_size = 13, grid = TRUE) +
+  theme(axis.title.y = element_blank())+
+  theme(plot.title = element_text(hjust = 0.5))
+avg_temp
+#ref:https://www.kaggle.com/headsortails/be-my-guest-recruit-restaurant-eda
+```
+
+<br>
+From the above avg_temperature plot, we can see that, on average, there is a range of about 20 celsius degrees between winter and summer, and for every typical month, the temperature spread across around 10 degrees. Morever, the average temperature of Japan is above 0 Celsius almost all the year round. The average temperature is the highest from July to August in 2016, which is near 30 Celsius.
+
+Let's see the distribution of other weather factors. 
+
+```{r weather_distribution, warning=FALSE, message=FALSE}
+weather_related <- weather_data %>%
+  select(-visitors, - avg_temperature, -high_temperature, -low_temperature)
+plot_histogram(weather_related, ggtheme = theme_bw())
+```
+
+```{r weather_changeby_fec, warning=FALSE, message=FALSE}
+weather_monthly_by_fec <- weather_data %>%
+  group_by(prefecture, Month_Yr)%>%
+  summarise(monthly_visitors = sum(visitors),
+            avg_temperature = mean(avg_temperature),
+            avg_high_temperature = mean(high_temperature),
+            avg_low_temperature = mean(low_temperature),
+            avg_hours_sunlight = mean(hours_sunlight),
+            avg_wind_speed =mean(avg_wind_speed))
+
+ggplot(weather_monthly_by_fec)+
+  geom_point(aes(x = Month_Yr, avg_temperature),color="red", size= 1)+
+  geom_point(aes(x = Month_Yr, avg_wind_speed),color="blue",size= 1)+
+  geom_point(aes(x = Month_Yr, avg_hours_sunlight),color="purple",size= 0.8)+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 6))+
+  facet_wrap(~prefecture)
+
+```
+<br>
+Well, unfortunately, it seems that there are no significant difference of wind speed and sunlight between different months in a year. In other words, sunlight and wind speed have no impact on the amount of visitors as well.
+
+###5.3 Relationship of target variables(Visitors) and other variables 
+
+#### A. Visitors VS. Type/Location
+
+**(1). Does the type of restaurants influence the amount of visitors?**
+<br>
+Here, we conduct analysis between air_genre_name ane the amount of visitors.
+
+```{r air_genre_name vs. visitors}
+
+genre_visit <- final_data %>%
+  group_by(air_genre_name)%>%
+  summarise(visitors = sum(visitors))
+
+most_genre <- ggplot(final_data, aes(air_genre_name))+
+  geom_bar(alpha=0.6,fill = "#338658")+
+  xlab("air genre name") + 
+  ggtitle("Bar chart for Air Genre Name")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  theme(plot.title = element_text(hjust = 0.5))
+ 
+most_visitor_genre <- ggplot(genre_visit, aes(x = air_genre_name, visitors))+
+  geom_bar(stat = "identity",fill="#c1c084")+
+  scale_colour_hue(c=45, l=80)+
+  xlab("air genre name") + 
+  ylab("Visitors") +
+  ggtitle("Different Genres vs. Visitors")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(most_genre, most_visitor_genre, ncol = 2)
+
+```
+<br>
+Form the two plots above, we can observe that the frequency distribution of *air_genre_name* and the distribution of total visitors for different genres are similar. Also, we can see that Izakaya has the highest frequency in the dataset and most total visitors, while International Cuisine has the lowest grequency in the data set and least total visitors. Therefore, we can infer that Izakaya can predict more visitors. 
+
+**(2). Does the location has an impact on popularity?**
+<br>
+Here, we conduct analysis between longitude, latitude, and the amount of visitors.
+```{r longitude vs. visitors}
+# The amount of visitors VS Longitude
+ggplot(final_data, aes(x = longitude, y = visitors))+
+  geom_point(color = "darkred", alpha=0.5, size = 0.7)
+```
+
+```{r latitude vs. visitors}
+# The amount of visitors VS Latitude
+ggplot(final_data, aes(x = latitude, y = visitors))+
+  geom_point(color = "darkred", alpha=0.5, size = 0.7)
+```
+<br>
+From the two plots above, we can conclude that there is not obvious relationship between the amount of visitors and longitude. However, it seems that the lower the latitude, the more amount of visitors, indicating that restauants in lower latitude area are more popuplar among Janpanese. By 
+the way, this kind of relationship may be uncorrect due to some confounding variables, like the level of development and weather. And we will dig into weather-related variables in Part II.
+
+#### B. Visitors VS. Dates
+
+**General view: how does the number of visitors vary according to different visit dates?**
+
+```{r visitDate_visitors}
+# The relationship between visit_date and the amount of visitors.
+
+ggplot(final_data) + 
+  geom_point(aes(x = visit_date, y = visitors), alpha = 0.5, color = "blue3", size = 0.7)+
+  labs(x = "Visit Date",
+       y = "Count of Visitors",
+       title = "How does the number of visitors vary among different dates?")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+<br>
+It can be observed from the scatter plot that for most restaurants, it's daily visitors are less than 125 from January 2016 to April 2017, only 5 outliers have visitors beyond 500. 
+
+**Visitors VS. Week Days: Which day of week do visitors prefer to eat out?**
+
+```{r most day vs. person,, warning=FALSE, message=FALSE,fig.width=7}
+week_visit <- final_data %>%
+  group_by(day_of_week)%>%
+  summarise(visitors = sum(visitors))
+
+most_day <- ggplot(final_data, aes(day_of_week))+
+  geom_bar(alpha=0.8,fill = "#338658")+
+  xlab("day of week") + 
+  ggtitle("Bar chart for Day of Week")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  theme(plot.title = element_text(hjust = 0.5))
+ 
+most_visitor <- ggplot(week_visit, aes(x = day_of_week, visitors))+
+  geom_bar(stat = "identity",fill="#c1c084")+
+  scale_colour_hue(c=45, l=80)+
+  xlab("day of week") + 
+  ylab("Visitors") +
+  ggtitle("Bar chart between week days and visitors")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(most_day, most_visitor, ncol = 2)
+```
+<br>
+There are two plots above, the left one shows the distrubution of day of weeks, which means Friday is the most frequent day that people would choose to go out. The right graph represents the sum of visitors of that day of week, which we can clearly see that Saturday has more visitors totally compared with other days. It's very interesting to combine these two graphs together because visitors come to the restaurants more often on Friday, but more visitors come on Saturday. Is this mismatch issue due to extreme values? We will discover it next.
+
+First, we are going to find those extreme values, namely outliers. 
+```{r outliers, warning=FALSE, message=FALSE,fig.height=4,fig.width=3}
+ggplot(final_data)+
+  geom_boxplot(aes(x = "", y = visitors))+
+  labs(x = "",
+       y = "visitors", 
+       title = "Distribution of Visitors")
+```
+<br>
+From the box plot, we can observe that there are few visit dates whose visitors are above 250, compared with our whole dataset. We delete these outliers to exclude the impact of extreme values. 
+
+```{r subset, warning=FALSE, message=FALSE}
+final_data_sub <- subset(final_data, visitors < 250)
+```
+Then, we  are going to analyze the data for business days and weekends seperately. 
+
+```{r distribution_v_weekdays,warning=FALSE, message=FALSE}
+# The distributions of visitors of business days.
+business_day <- subset(final_data_sub, day_of_week == c("Monday","Tuesday","Wednesday","Thursday","Friday"))
+
+ggplot(business_day,aes(visitors,fill = day_of_week))+
+geom_histogram()+
+facet_wrap(~ day_of_week)+
+theme_wsj()+
+scale_fill_wsj()+
+guides(fill=guide_legend(title=NULL))   
+
+```
+
+```{r distribution_v_weekend, warning=FALSE, message=FALSE}
+# The distributions of visitors of weekends.
+weekend <- subset(final_data_sub, day_of_week == c("Saturday","Sunday"))
+
+ggplot(weekend,aes(visitors,fill = day_of_week))+
+geom_histogram()+
+facet_wrap(~ day_of_week)+
+theme_wsj()+
+scale_fill_wsj()+
+guides(fill=guide_legend(title=NULL))   
+```
+<br>
+
+Apart from that, we also plot a general distribution for eat out ratio and distribution, combining the business days and weekends together.
+
+```{r eat_out_distribution, warning=FALSE, message=FALSE}
+day_eat_out_ratio <-
+  ggplot(final_data_sub, aes(x= visitors, fill = day_of_week)) +
+  geom_histogram()+
+    labs(x = "visitors",
+       y = "count",
+       fill = "day of week",
+       title = "Which day of week do visitors prefer to eat out?")+
+  scale_fill_brewer(palette = "Spectral")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+day_eat_out_ratio
+```
+<br>
+Based on the four graphs above, we confirm that even though extreme values are excluded, the result is the same Friday is the most frequent day that people would choose to go out while Saturday has more visitors totally compared with other days.
+<br>
+
+**Visitors VS. Holidays: Are the amount of visitors different between holidays and non-holidays?**
+
+Then, we are curious about whether holidays and non-holidays have different amount of visitors. 
+
+To do this, we need to make *holiday_flg* factor first, and assign 'holiday' and 'non-holiday' to '0' and '1', respectively. 
+```{r holiday analysis, warning=FALSE, message=FALSE}
+final_data$holiday_flg <- as.factor(final_data$holiday_flg)
+levels(final_data$holiday_flg) <- c('nonholiday', 'holiday')
+table(final_data$holiday_flg)
+
+paste('Now there are', nrow(subset(final_data, holiday_flg == "nonholiday")), 'nonholidays and', nrow(subset(final_data, holiday_flg == "holiday")), 'holidays')
+```
+
+```{r holiday analysis2, warning=FALSE, message=FALSE}
+ggplot(data = final_data) +
+  geom_histogram(aes(x = visitors, fill = holiday_flg), position = "dodge")+
+  labs(x = "visitors",
+       y = "count",
+       fill = "holiday or not",
+       title = "Is the amount of visitors different between holidays and non-holidays?")+
+     scale_fill_manual(values = alpha(c("blue", "red", "yellow"), .6))
+```
+<br>
+
+There are huge difference of total amount of visitors between holidays and nonholidays. However, this differentiation may be due to different scales of holidays and nonholidays. We need to do deeper analysis by counting visitors per holiday and non-holiday.
+
+```{r visitors_per holiday}
+# Visitors per holiday
+total_visitors <- final_data %>%
+  group_by(holiday_flg)%>%
+  summarise(visitors = sum(visitors))
+
+visitors_per_holiday <-  total_visitors[2,2]/nrow(subset(final_data, holiday_flg == "holiday"))
+
+paste('There are', visitors_per_holiday, 'visitors per holiday')
+
+# Visitors per non-holiday
+visitors_per_non_holiday <-  total_visitors[1,2]/nrow(subset(final_data, holiday_flg == "nonholiday"))
+
+paste('There are', visitors_per_non_holiday, 'visitors per non-holiday')
+
+```
+Thus, when we exclude scale factors, we can see that actually there are more visitors during holidays since visitors per holiday are more than visitors per non-holiday. Thus, we infer that Janpanese prefer to enjoy holidays with their families, similar to many cultures around the world.
+
+#### C. Visitors VS. Weather-related variables
+
+In this part, we are going to analyze the impact of the weather on the amount of visitors.
+
+**Visitors VS. Temperature: The relationship between temperature and the amount of visitors.**
+
+In here, we would like to know whether the change in temperature, change in the number of restaurant visitors.
+
+```{r temp_visitors, warning=FALSE, message=FALSE}
+temp_visitors <- 
+  ggplot(weather_monthly, mapping = aes(x= Month_Yr, y= monthly_visitors, fill = avg_temperature))+
+  geom_histogram(stat = "identity")+
+  labs(s = "Month",
+       y = "Visitors",
+       title = "Visitors of Different Months")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+temp_visitors
+```
+<br>
+From this plot, we can see that in the hotter months(May-Oct.), the number of monthly visitors didn't change by the temperature in different months. 
+<br>
+Therefore, there is no evidence that temperature has impact on the amount of visitors. 
+<br>
+
+**Visitors VS. Sunlight: The relationship between sunlight and the amount of visitors.**
+
+In here, we would like to know whether the change in sun light, change in the number of restaurant visitors.
+
+
+```{r sunlight_visitors, warning=FALSE, message=FALSE}
+sunlight_visitors <- 
+  ggplot(weather_monthly, mapping = aes(x= Month_Yr, y= monthly_visitors, fill = avg_hours_sunlight ))+
+  geom_histogram(stat = "identity")+
+  labs(s = "Month",
+       y = "Visitors",
+       title = "Visitors of Different Months")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  
+sunlight_visitors
+```
+<br>
+From this plot, we can see that the number of monthly visitors didn't change by the sunlight in different months. 
+<br>
+Therefore, there is no evidence that sunlight has impact on the amount of visitors. 
+<br>
+
+**Visitors VS. Wind Speed: The relationship between wind speed and the amount of visitors.**
+
+In here, we would like to know whether the change in wind speed, change in the number of restaurant visitors.
+
+```{r windspeed_visitors, warning=FALSE, message=FALSE}
+wind_visitors <- 
+  ggplot(weather_monthly, mapping = aes(x= Month_Yr, y= monthly_visitors, fill = avg_wind_speed ))+
+  geom_histogram(stat = "identity")+
+  labs(s = "Month",
+       y = "Visitors",
+       title = "Visitors of Different Months")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  
+wind_visitors
+```
+<br>
+From this plot, we can see that the number of monthly visitors didn't change by the wind speed in different months. 
+<br>
+Therefore, there is no evidence that wind speed has impact on the amount of visitors. 
+<br>
+
+In conlusion, weather does not influence the mount of visitors in Japan.
+
+### Discovery from EDA :  
+1. There are **diversified restaurants** in Japan, most of which are located along the coastline. And except for the Mt. Fuji area, the lower the latitude, the more the visitors. 
+<br>
+2. On average, **holidays have more visitors per day**, indicating that vacation promotes consumption.
+<br>
+3. It's interesting that **Friday** is the most frequent day that people would choose to go out while Saturday has more visitors totally compared with other days. Thus, restaurants need to consider how to attract more visitors on Friday. Special discounts could be useful.
+<br>
+4. **Weather does not influence** the amount of visitors significantly. Thus, we conculde that the active management ability of restaurants is the key point for business success. 
+
+
+##6 Data Transformation (Part II) -- Feature Engineering
+
+In the first part of data transformation, we did the data cleaning before we conduct the EDA. In this part, we will transform several useful variables based on our finding during EDA to capture more information and thus improve the performation of our model.
+
+###6.1 weekend or not
+
+In the EDA part, we find that usually Friday, Saturday and Sunday has more visitors, which demonstrate the importance of weekend in our setting. Therefore, we need to create a indicator variable to indentified whether or not a date is weekend.
+
+```{r trans_isweekend}
+final_data <- final_data %>% 
+  mutate(is_weekend = case_when(day_of_week == "Saturday"  ~ "weekend",
+                                day_of_week == "Sunday"  ~ "weekend",
+                                day_of_week == "Monday"  ~ "notweekend",
+                                day_of_week == "Tuesday"  ~ "notweekend",
+                                day_of_week == "Wednesday"  ~ "notweekend",
+                                day_of_week == "Thursday"  ~ "notweekend",
+                                day_of_week == "Friday"  ~ "notweekend"))
+final_data
+```
+
+###6.2 Previous and next day is holiday or not
+
+Generally speaking, people are more likely to go out during holidays. For some special holidays, people hang out even before or after the holiday. Therefore, we decide to create two variables to indentify whether pervious or next day of this day is holiday.
+
+```{r trans_preholiday}
+holiday <- final_data %>% 
+  select(air_store_id, visit_date) %>% 
+  mutate(dayminus = visit_date - 1) 
+holiday <- holiday %>% 
+  left_join(date_info, by = c("dayminus" = "calendar_date")) %>% 
+  mutate(pres_holiday = holiday_flg) %>% 
+  select(-holiday_flg, - day_of_week, - dayminus)
+final_data <- left_join(holiday,final_data, by = c("visit_date" = "visit_date", "air_store_id" = "air_store_id"))
+```
+
+```{r trans_nextholiday}
+holiday <- final_data %>% 
+  select(air_store_id, visit_date) %>% 
+  mutate(dayplus = visit_date + 1) 
+holiday <- holiday %>% 
+  left_join(date_info, by = c("dayplus" = "calendar_date")) %>% 
+  mutate(next_holiday = holiday_flg) %>% 
+  select(-holiday_flg, - day_of_week, - dayplus)
+final_data <- left_join(holiday,final_data, by = c("visit_date" = "visit_date", "air_store_id" = "air_store_id"))
+final_data
+```
+
+###6.3 Extract month and day of month
+
+As we saw in EDA part, actually there exist certain pattern of visitors within each month. Our guess is that it may relates to the day people get paid in their job. To capture this underline trend, we create a new variable indicates day of the month. Also, we create the month variable to differenciate month.
+
+```{r}
+final_data <- final_data %>% 
+  mutate(month = month(visit_date))
+```
+
+```{r}
+final_data <- final_data %>% 
+  mutate(day_of_month = mday(visit_date))
+```
+
+###6.4 Extract city
+
+The variable *air_area_name* shows the area that the store locates. Currently there are 103 indentified areas in our dataset. Through analysing the value, we realized that the first one or two words indicated the city that the store locates. To avoid dummy all these 103 different areas in our model, which might lead to ovefitting, we extract the information of cities from this column and filter out the rest redundant information.
+
+```{r}
+final_data %>% 
+  group_by(air_area_name) %>% 
+  summarise(sum(visitors))
+```
+
+```{r}
+final_data <- final_data %>% 
+  mutate(city = case_when(grepl('Tōkyō', air_area_name) ~'Tōkyō',
+                          grepl('Fukuoka',air_area_name) ~'Fukuoka',
+                          grepl('Hiroshima',air_area_name) ~'Hiroshima',
+                          grepl('Hokkaidō',air_area_name) ~'Hokkaidō',
+                          grepl('Hyōgo',air_area_name) ~'Hyōgo',
+                          grepl('Miyagi',air_area_name) ~'Miyagi',
+                          grepl('Niigata',air_area_name) ~'Niigata',
+                          grepl('Ōsaka',air_area_name) ~'Ōsaka',
+                          grepl('Shizuoka',air_area_name) ~'Shizuoka'))
+```
+
+After finish feature engineering, we set those categorical variables as factor.
+
+```{r}
+final_data$is_weekend <- as.factor(final_data$is_weekend)
+final_data$month <- as.factor(final_data$month)
+final_data$city <- as.factor(final_data$city)
+final_data$day_of_month <- as.factor(final_data$day_of_month)
+final_data$pres_holiday <- as.factor(final_data$pres_holiday)
+final_data$next_holiday <- as.factor(final_data$next_holiday)
+final_data$holiday_flg <- as.factor(final_data$holiday_flg)
+final_data$day_of_week <- as.factor(final_data$day_of_week) 
+final_data$air_genre_name <- as.factor(final_data$air_genre_name)
+final_data$air_area_name <- as.factor(final_data$air_area_name)
+```
+
+And then, we can start to train our learners.
+
+##7 Data modeling
+
+###7.1 Data Split
+
+Firstly, we split our data into training data and test data. Also, we perform cross validation on the training data.
+
+```{r}
+set.seed(1067)
+model_data <- final_data %>% 
+  select(-air_store_id, -visit_date, - air_area_name) #drop store_id, visit date
+model_data <- na.omit(model_data)
+model_data
+  
+data_split <- initial_split(model_data)
+air_train <- training(data_split)
+air_test  <- testing(data_split)
+cv_splits <- vfold_cv(air_train, v = 10)
+```
+
+###7.2 Create recipe
+
+Then, we create our recipe for the final dataset, performing some final data transformation to facillitate our training. Considering our target variable **visitors** is right skewed, here we use logarithm to transform it. Also, we use step_other to group those sparse values in air_genre_name variable.
+
+```{r recipe}
+rec_mod <- recipe(visitors ~ .,
+                  data = air_train) %>% 
+     step_other(air_genre_name, threshold = 0.05) %>% 
+     step_scale(all_numeric(),-visitors) %>% 
+     step_center(all_numeric(),-visitors) %>% 
+     step_dummy(all_nominal()) %>% 
+     step_log(visitors)
+```
+
+###7.3 Training the model
+
+In this part, we are going to try three different models: Gradient Boosted Trees, Netural Network, and MARS. 
+
+####(1) Gradient Boosted Trees
+
+The first learner we are using to train the model is Gradient Boosted Trees.
+```{r control}
+ctrl <- trainControl(method = 'cv', number = 10, 
+                     savePredictions = "final",
+                     verboseIter = TRUE)
+```
+
+Define the trainig grid.
+```{r grid}
+grid_gbm <- expand.grid(interaction.depth = seq(20, 40, by = 5), #max tree depth
+                        n.trees = 100, #boosting iteration with 100 trees
+                        shrinkage = 0.1,
+                        n.minobsinnode = 10)
+```
+
+```{r gbm,warning=FALSE,results='hide'}
+set.seed(2651)
+cl <- makeCluster(8)
+registerDoParallel(cl)
+
+gbm_mod <- train(rec_mod,
+                 data = air_train,
+                 method = 'gbm',
+                 metric = "RMSE",
+                 tuneGrid = grid_gbm,
+                 trControl = ctrl,
+                 verbose = FALSE)
+stopCluster(cl)
+```
+
+Firstly, we want to have a quick look on our model.
+```{r}
+gbm_mod
+```
+
+As we can see from the graph below, the optimal tree for our learner has depth of 25.
+```{r}
+ggplot(gbm_mod)
+```
+
+Then, we make our prediction on the test set. Since we performed logarithm transformation on our training data before, we need to transform the target value back after the prediction. As we can see from the result below, the RMSE value is about 15.24 for the prediction on test set.
+```{r}
+gbm_test <- predict(gbm_mod, newdata = air_test)
+gbm_result <- postResample(pred = exp(gbm_test), obs = air_test$visitors)
+print(gbm_result)
+```
+
+And let's draw out the prediction graph.
+```{r}
+gbm_final <- data.frame(cbind(actuals = air_test$visitors, predicteds = exp(gbm_test)))
+ggplot(gbm_final, aes(x = actuals, y = predicteds))+
+  geom_point()+
+  geom_smooth(method = 'lm', se = FALSE)+
+  geom_abline(color = 'red')
+```
+
+####(2) Neural Network
+
+The second learner we are using to train the model is MARS.
+```{r}
+nn_grid <-  expand.grid(size  = c(2, 3, 4, 5,6,7),
+                        decay = c(10^(-1),10^(-2)))
+```
+
+```{r nn,results='hide'}
+set.seed(2651)
+cl <- makeCluster(8)
+registerDoParallel(cl)
+
+set.seed(3555)
+nn_mod <- train(
+  rec_mod, 
+  data = air_train, 
+  method = 'nnet',
+  maxit = 1000,
+  tuneGrid = nn_grid,
+  allowParallel = TRUE,
+  trControl = ctrl,
+  linout = TRUE)
+
+stopCluster(cl)
+```
+
+Let's have a quick look on how our model looks like.
+```{r}
+nn_mod
+```
+
+Then, we plot out the tuning process of our neural network model. As we can see below, the optimal hidden units for 0.01 learning rate is 4 and 7 for 0.1 learning rate. Since neural network takes a lot of time to run, the range of parameters we choose to tune is limited so we may not receive the best outcome from our neural network model.
+```{r}
+ggplot(nn_mod)
+```
+
+Then, we make our prediction on the test set. As we can see from the result below, the RMSE value is about 15.99 for the prediction on test set.
+```{r nntest}
+nn_test <- predict(nn_mod, newdata = air_test)
+nn_result <- postResample(pred = exp(nn_test), obs = air_test$visitors)
+print(nn_result)
+```
+
+Then, we draw out the prediction plot for our neural network learner.
+```{r nnpointplot}
+nn_final <- data.frame(cbind(actuals = air_test$visitors, predicteds = exp(nn_test)))
+ggplot(nn_final, aes(x = actuals, y = predicteds))+
+  geom_point()+
+  geom_smooth(method = 'lm', se = FALSE)+
+  geom_abline(color = 'red')
+```
+
+####(3) MARS
+
+The third learner we are using to train the model is MARS.
+```{r mars,results='hide'}
+cl <- makeCluster(8)
+registerDoParallel(cl)
+
+set.seed(2651)
+mars_mod <- train(
+  rec_mod,
+  data = air_train,
+  method = "gcvEarth",
+  tuneGrid = data.frame(degree=1:2),
+  trControl = ctrl
+)
+stopCluster(cl)
+```
+
+Let's have a quick look on how our model looks like.
+```{r}
+mars_mod
+```
+
+Then, we plot out the tuning process of the MARS model.
+```{r}
+ggplot(mars_mod)
+```
+
+
+Then, we make our prediction on the test set. As we can see from the result below, the RMSE value is about 15.81 for the prediction on test set.
+```{r marstest}
+mars_test <- predict(mars_mod, newdata = air_test)
+mars_result <- postResample(pred = exp(mars_test), obs = air_test$visitors)
+print(mars_result)
+```
+
+After that, we draw out the prediction plot.
+```{r marspointplot}
+mars_final <- data.frame(cbind(actuals = air_test$visitors, predicteds = exp(mars_test)))
+ggplot(mars_final, aes(x = actuals, y = predicteds))+
+  geom_point()+
+  geom_smooth(method = 'lm', se = FALSE) +
+  geom_abline(color = 'red')
+```
+
+Finally, we plot out the variable importance plot to see which attribute has the largest contribution on our learner.
+```{r}
+mars_imp <- varImp(mars_mod)
+ggplot(mars_imp, top=20) + xlab("")
+```
+
+As it can be seen from the variable importance graph, variables like the number of reserved visitors, whether it is Saturday or not, location has the most highest contribution on our MARS learner. This is a pretty reasonable finding and what we can learn from our model is our prediction are correlated to attributes like number of reserved vistors and location.
+
+##8 Model Comparison
+
+In this part, we compare three models and choose our final model.
+
+###8.1 Model result
+```{r}
+r_rmse_test <- c(gbm_result[1], nn_result[1],mars_result[1])
+r_rsq_test <- c(gbm_result[2], nn_result[2],mars_result[2])
+title <- c("Gradient Boosted Trees", "Netural Network","gcvEarth")
+r_table <- data.frame("Model" = title, "RMSE_testing"=r_rmse_test, "RSquared_testing" = r_rsq_test)
+r_table
+```
+
+```{r}
+p1<-ggplot(r_table, aes (x = reorder(Model,-RSquared_testing), y = RSquared_testing))+
+    geom_bar(stat = 'identity',aes(fill = Model))+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+    guides(fill = FALSE)+
+    scale_fill_brewer(palette = "Set1")+
+    labs(x = "Model",
+         y = "RSquared",
+         title = "RSquared in testing set")
+  
+p2<-ggplot(r_table, aes (x = reorder(Model,RMSE_testing), y = RMSE_testing))+
+    geom_bar(stat = 'identity',aes(fill = Model))+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+    guides(fill = FALSE)+
+    scale_fill_brewer(palette = "Set1")+
+    labs(x = "Model",
+         y = "RMSE",
+         title = "RMSE in testing set")
+grid.arrange(p1,p2,ncol = 2)
+```
+
+As we can see, the GBM model has the highest R-squared value and lowest RMSE value, which indicates it might be our best model. However, to validate our choice, let's use possteriors analysis to evaluate their performance.
+
+###8.2 Bayes Analysis
+
+```{r,results='hide'}
+rs <- resamples(
+    list(gbm = gbm_mod, nn = nn_mod, mars = mars_mod)
+)
+rmse_mod <- perf_mod(rs, seed = 5391, iter = 5000, metric = "RMSE")
+```
+
+```{r}
+posteriors <- tidy(rmse_mod, seed = 973254)
+summary(posteriors)
+```
+
+```{r}
+diff <- contrast_models(
+     rmse_mod,
+     #list_1 = c('gbm','mars'),
+     list_1 = c('nn','gbm'),
+     list_2 = c('mars','nn'),
+     seed = 2359
+)
+summary(diff, size = 0.025)
+```
+
+```{r}
+diff %>%
+  mutate(contrast = paste(model_2, "vs", model_1)) %>% 
+    ggplot(aes(x = difference, col = contrast)) + 
+    geom_line(stat = "density") + 
+    geom_vline(xintercept = c(-0.025, 0.025), lty = 2)
+```
+
+As we can see from the result, the MARS and netural network model perform quite similar in the test set. However, the GBM perform a little bit better than these two models. Therefore, we choose the GBM model as our final model.
+
+##9 Conclusion & Application
+
+As we analyzed above, we decide to choose our GBM learner as our final model. Firstly, let's have a quick look again on how our final model performs.
+```{r}
+gbm_mod$finalModel
+```
+
+```{r gbmfinaltest}
+gbm_test <- predict(gbm_mod, newdata = air_test)
+gbm_result <- postResample(pred = exp(gbm_test), obs = air_test$visitors)
+print(gbm_result)
+```
+
+```{r gbmfinalpointplot}
+gbm_final <- data.frame(cbind(actuals = air_test$visitors, predicteds = exp(gbm_test)))
+ggplot(gbm_final, aes(x = actuals, y = predicteds))+
+  geom_point()+
+  geom_smooth(method = 'lm', se = FALSE)+
+  geom_abline(color = 'red')
+```
+
+###9.1 Conclusion 
+
+The conclusion we can draw from our project is that, our gradient boosting trees model outperforms two other models: neural network and MARS in terms of both root mean squared errors and R squared value. Since the target of our prediction is numerical data, we choose RMSE as our loss function and the RMSE of our final prediction is about 15.24. Considering the limited information provided, this value of RMSE is acceptable.
+
+To conclude, it is a valuable project for all of us since it needs many feature engineering, data cleaning and data transformation techniques in order to do the training. Also, there are some points could be improved if we are given more time. For instance, we limited our range of running parameters because it took so much time on running the models in RStudio. Additionally, there are other models we could consider like SVM and bagging method.
+
+###9.2 Application
+
+After choosing this final model, the business application we can perform with it is to predict the number of visitors for candidate restaurants. By doing so, we can build cooperation with our candidate restaurants to provide several type of services with our customer prediction model.
+
+**1. Improve resource allocation**
+
+Predicting number of customers for the following days would allow restaurants to optimize the resource allocation like rescheduling opening time. This could help them reduce budget on a lot of things like human resources.
+
+For instance, a restaurant could have a better knowledge on having how many employees in the store for a normal weekend based on our model. Additionally, we can draft customized restaurant operation strategies for our customers. If we predict there are going to be more visitors than usual, we can suggest the restaurant to hire some part-time employees and order more materials. 
+
+**2. Design marketing strategy**
+
+Another application of our model is to provide suggestion on marketing strategy. Also, the restaurant could combine their marketing strategy with our prediction result. For most restaurants, we predict that there will be fewer customers during weekdays. Acknowledged that, we can suggest restaurant to provide coupon that only can be used during weekdays to attract more visitors and thus avoid resource waste during those days.
+
+**3. Predict further revenue**
+
+Based on prediction of visitors for each day, month, year, the restaurant can easily make a further prediction of their future revenue based on their needs. This prediction can be valuable, especially for those multiunit restaurants. If our prediction model shows that there might be fewer customers for a specific store in the future, the company might consider to improve their service to generate more revenue. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
